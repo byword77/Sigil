@@ -92,7 +92,7 @@ private slots:
     bool eventFilter(QObject* watched, QEvent* event) override;
     void toggleShowToolbar(bool checked);
 
-   
+  
 private:
     void ReadSettings();
     void WriteSettings();
@@ -110,6 +110,7 @@ private:
     void UpdateImageDescription();
     QRect BuildRect(const QPoint& p1, const QPoint& p2);
     void extendToolTip(QAction* m, const QString sc);
+    int GetHandleAtPosition(const QPoint& pos);
     
     Ui::AdjustImage *ui;
     QVBoxLayout* vlayout;
@@ -127,6 +128,7 @@ private:
     QPoint m_rbstart;
     QPoint m_rbend;
     QRubberBand*  m_rb;
+    int m_draggingHandle;
 
     QString m_fileName;
     QString m_mediatype;
