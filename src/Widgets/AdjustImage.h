@@ -81,6 +81,8 @@ public slots:
     void doRotateLeft();
     void doRotateRight();
     void doCrop();
+    void doCropConfirm();
+    void doCropCancel();
     void doResizeImage();
 
 signals:
@@ -90,7 +92,7 @@ private slots:
     bool eventFilter(QObject* watched, QEvent* event) override;
     void toggleShowToolbar(bool checked);
 
-  
+   
 private:
     void ReadSettings();
     void WriteSettings();
@@ -119,6 +121,7 @@ private:
     QLabel * m_description;
 
     bool m_croppingState;
+    bool m_croppingRegionSelected;
     QPoint m_croppingStart;
     QPoint m_croppingEnd;
     QPoint m_rbstart;
