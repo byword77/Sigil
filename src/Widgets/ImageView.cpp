@@ -43,7 +43,7 @@ static const QString IMAGE_HTML_BASE =
     "<html>"
     "<head>"
     "<style type=\"text/css\">"
-    "body { -webkit-user-select: none; margin: 0; }"
+    "body { -webkit-user-select: none; margin: 0; display: flex; flex-direction: column; justify-content: center; align-items: center; min-height: 100vh; }"
     "div { text-align: center; margin: 8px 0; }"
     "img { display: block; margin: 0 auto; border: 1px solid; max-width: 100%; max-height: calc(100vh - 75px); }"
     "hr { width: 75%; }"
