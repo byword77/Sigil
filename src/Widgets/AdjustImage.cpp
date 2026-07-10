@@ -43,11 +43,13 @@
 
 static const QString SETTINGS_GROUP = "adjust_image";
 static QStringList SAVE_QUALITY_MEDIATYPES = QStringList() << "image/jpeg" << "image/webp" << "image/avif" << "image/jxl";
+static const int HANDLE_SIZE = 10;
 
 AdjustImage::AdjustImage(const QString filepath, const QString& mediatype,  QWidget *parent) :
     QWidget(parent),
     ui(new Ui::AdjustImage),
-    m_mediatype(mediatype)
+    m_mediatype(mediatype),
+    m_draggingHandle(-1)
 {
     ui->setupUi(this);
     m_mainToolBar = ui->mainToolBar;
@@ -106,6 +108,8 @@ AdjustImage::AdjustImage(const QString filepath, const QString& mediatype,  QWid
         }
         m_scaleFactor = 1.0;
         m_croppingState = false;
+        m_croppingRegionSelected = false;
+        m_draggingHandle = -1;
         setCursor(Qt::ArrowCursor);
         updateActions(true);
         refreshLabel();
@@ -167,6 +171,26 @@ QRect AdjustImage::BuildRect(const QPoint& p1, const QPoint& p2)
     return arect;
 }
 
+int AdjustImage::GetHandleAtPosition(const QPoint& pos)
+{
+    QRect cropRect = BuildRect(m_rbstart, m_rbend);
+    int handle = -1;
+    
+    // Check which handle is being clicked (top-left, top-right, bottom-left, bottom-right, or edges)
+    if (QRect(cropRect.topLeft().x() - HANDLE_SIZE, cropRect.topLeft().y() - HANDLE_SIZE, HANDLE_SIZE * 2, HANDLE_SIZE * 2).contains(pos)) {
+        handle = 0; // top-left
+    } else if (QRect(cropRect.topRight().x() - HANDLE_SIZE, cropRect.topRight().y() - HANDLE_SIZE, HANDLE_SIZE * 2, HANDLE_SIZE * 2).contains(pos)) {
+        handle = 1; // top-right
+    } else if (QRect(cropRect.bottomLeft().x() - HANDLE_SIZE, cropRect.bottomLeft().y() - HANDLE_SIZE, HANDLE_SIZE * 2, HANDLE_SIZE * 2).contains(pos)) {
+        handle = 2; // bottom-left
+    } else if (QRect(cropRect.bottomRight().x() - HANDLE_SIZE, cropRect.bottomRight().y() - HANDLE_SIZE, HANDLE_SIZE * 2, HANDLE_SIZE * 2).contains(pos)) {
+        handle = 3; // bottom-right
+    } else if (cropRect.contains(pos)) {
+        handle = 4; // move entire rectangle
+    }
+    
+    return handle;
+}
 
 void AdjustImage::UpdateImageDescription()
 {
@@ -193,10 +217,13 @@ void AdjustImage::changeCroppingState(bool changeTo)
     m_croppingState = changeTo;
     ui->actionCrop->setDisabled(changeTo);
 
-    if (changeTo)
+    if (changeTo) {
         setCursor(Qt::CrossCursor);
-    else
+        m_statusBar->showMessage(tr("Click and drag to select crop area, then click Confirm"));
+    } else {
         setCursor(Qt::ArrowCursor);
+        m_statusBar->clearMessage();
+    }
 }
 
 void AdjustImage::refreshLabel()
@@ -297,27 +324,44 @@ bool AdjustImage::eventFilter(QObject* watched, QEvent* event)
         {
             if (!m_croppingState) break;
             const QMouseEvent* const me = static_cast<const QMouseEvent*>(event);
-            m_croppingStart = me->pos() / m_scaleFactor;
-            // QRubberBand scales with m_imageLabel scaling
-            m_rbstart = me->pos();
-            m_rb->setGeometry(QRect(m_rbstart, QSize()));
-            m_rb->show();
+            
+            if (!m_croppingRegionSelected) {
+                // Initial selection mode
+                m_croppingStart = me->pos() / m_scaleFactor;
+                m_rbstart = me->pos();
+                m_rb->setGeometry(QRect(m_rbstart, QSize()));
+                m_rb->show();
+            } else {
+                // Adjustment mode - check if clicking on a handle
+                m_draggingHandle = GetHandleAtPosition(me->pos());
+                if (m_draggingHandle == -1) {
+                    // Not on handle, restart selection
+                    m_croppingRegionSelected = false;
+                    m_croppingStart = me->pos() / m_scaleFactor;
+                    m_rbstart = me->pos();
+                    m_rb->setGeometry(QRect(m_rbstart, QSize()));
+                    m_rb->show();
+                }
+            }
             break;
         }
 
         case QEvent::MouseButtonRelease:
         {
             if (!m_croppingState) break;
-            saveToHistoryWithClear(m_image);
             const QMouseEvent* const me = static_cast<const QMouseEvent*>(event);
-            m_croppingEnd = me->pos() / m_scaleFactor;
-            m_rbend = me->pos();
-            m_rb->setGeometry(BuildRect(m_rbstart, m_rbend));
-            m_rb->hide();
-            QRect rect = BuildRect(m_croppingStart, m_croppingEnd);
-            m_image = m_image.copy(rect);
-            refreshLabel();
-            changeCroppingState(false);
+            
+            if (!m_croppingRegionSelected && m_draggingHandle == -1) {
+                // Finish initial selection
+                m_croppingEnd = me->pos() / m_scaleFactor;
+                m_rbend = me->pos();
+                m_rb->setGeometry(BuildRect(m_rbstart, m_rbend));
+                m_croppingRegionSelected = true;
+                m_statusBar->showMessage(tr("Drag corners/edges to adjust, then click Confirm to crop"));
+            } else if (m_draggingHandle >= 0) {
+                // Finish handle dragging
+                m_draggingHandle = -1;
+            }
             break;
         }
 
@@ -331,9 +375,52 @@ bool AdjustImage::eventFilter(QObject* watched, QEvent* event)
             int y_pos = std::round(position.y()/ m_scaleFactor);
             msg = msg.arg(x_pos).arg(y_pos).arg(sf);
             m_statusBar->showMessage(msg);
+            
             if (m_croppingState) {
-                m_rbend = position;
-                m_rb->setGeometry(BuildRect(m_rbstart, m_rbend));
+                if (!m_croppingRegionSelected && m_draggingHandle == -1) {
+                    // Drawing initial selection
+                    m_rbend = position;
+                    m_rb->setGeometry(BuildRect(m_rbstart, m_rbend));
+                } else if (m_croppingRegionSelected && m_draggingHandle >= 0) {
+                    // Dragging a handle to adjust crop area
+                    QRect currentRect = BuildRect(m_rbstart, m_rbend);
+                    
+                    if (m_draggingHandle == 0) {
+                        // top-left
+                        m_rbstart = position;
+                    } else if (m_draggingHandle == 1) {
+                        // top-right
+                        m_rbstart.setY(position.y());
+                        m_rbend.setX(position.x());
+                    } else if (m_draggingHandle == 2) {
+                        // bottom-left
+                        m_rbstart.setX(position.x());
+                        m_rbend.setY(position.y());
+                    } else if (m_draggingHandle == 3) {
+                        // bottom-right
+                        m_rbend = position;
+                    } else if (m_draggingHandle == 4) {
+                        // move entire rectangle
+                        QPoint delta = position - QPoint(currentRect.center().x(), currentRect.center().y());
+                        m_rbstart += delta;
+                        m_rbend += delta;
+                    }
+                    m_rb->setGeometry(BuildRect(m_rbstart, m_rbend));
+                }
+                
+                // Update cursor based on handle
+                if (m_croppingRegionSelected) {
+                    int handle = GetHandleAtPosition(position);
+                    if (handle == 0 || handle == 3) {
+                        setCursor(Qt::SizeFDiagCursor);
+                    } else if (handle == 1 || handle == 2) {
+                        setCursor(Qt::SizeBDiagCursor);
+                    } else if (handle == 4) {
+                        setCursor(Qt::SizeAllCursor);
+                    } else {
+                        setCursor(Qt::CrossCursor);
+                    }
+                }
             }
             break;
         }
@@ -347,7 +434,32 @@ bool AdjustImage::eventFilter(QObject* watched, QEvent* event)
 
 void AdjustImage::doCrop()
 {
+    m_croppingRegionSelected = false;
+    m_draggingHandle = -1;
     changeCroppingState(true);
+}
+
+void AdjustImage::doCropConfirm()
+{
+    if (m_croppingRegionSelected) {
+        saveToHistoryWithClear(m_image);
+        m_croppingEnd = m_rbend / m_scaleFactor;
+        m_croppingStart = m_rbstart / m_scaleFactor;
+        QRect rect = BuildRect(m_croppingStart, m_croppingEnd);
+        m_image = m_image.copy(rect);
+        refreshLabel();
+        m_rb->hide();
+        m_croppingRegionSelected = false;
+        changeCroppingState(false);
+    }
+}
+
+void AdjustImage::doCropCancel()
+{
+    m_rb->hide();
+    m_croppingRegionSelected = false;
+    m_draggingHandle = -1;
+    changeCroppingState(false);
 }
 
 #if 0
