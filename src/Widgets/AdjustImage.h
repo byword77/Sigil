@@ -111,6 +111,7 @@ private:
     QRect BuildRect(const QPoint& p1, const QPoint& p2);
     void extendToolTip(QAction* m, const QString sc);
     int GetHandleAtPosition(const QPoint& pos);
+    void clampCropRectToBounds();
     
     Ui::AdjustImage *ui;
     QVBoxLayout* vlayout;
@@ -127,6 +128,7 @@ private:
     QPoint m_croppingEnd;
     QPoint m_rbstart;
     QPoint m_rbend;
+    QPoint m_lastMousePos;
     QRubberBand*  m_rb;
     int m_draggingHandle;
 
