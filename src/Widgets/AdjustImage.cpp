@@ -70,6 +70,8 @@ AdjustImage::AdjustImage(const QString filepath, const QString& mediatype,  QWid
     m_imageLabel->setBackgroundRole(QPalette::Base);
     m_imageLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
     m_imageLabel->setScaledContents(true);
+    // Center align the image
+    m_imageLabel->setAlignment(Qt::AlignCenter);
     m_imageLabel->installEventFilter(this);
     // rubber band must be a child of the m_imageLabel
     // otherwise there is a coordinate nightmare
