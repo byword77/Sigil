@@ -36,6 +36,7 @@
 #include <QImageWriter>
 #include <QInputDialog>
 #include <QKeySequence>
+#include <QPushButton>
 #include "Misc/SettingsStore.h"
 #include "Dialogs/ImageResizeDialog.h"
 #include "Widgets/AdjustImage.h"
@@ -44,12 +45,16 @@
 static const QString SETTINGS_GROUP = "adjust_image";
 static QStringList SAVE_QUALITY_MEDIATYPES = QStringList() << "image/jpeg" << "image/webp" << "image/avif" << "image/jxl";
 static const int HANDLE_SIZE = 10;
+static const int MIN_CROP_SIZE = 2;
 
 AdjustImage::AdjustImage(const QString filepath, const QString& mediatype,  QWidget *parent) :
     QWidget(parent),
     ui(new Ui::AdjustImage),
     m_mediatype(mediatype),
-    m_draggingHandle(-1)
+    m_draggingHandle(-1),
+    m_lastMousePos(0, 0),
+    m_cropConfirmBtn(nullptr),
+    m_cropCancelBtn(nullptr)
 {
     ui->setupUi(this);
     m_mainToolBar = ui->mainToolBar;
@@ -77,6 +82,10 @@ AdjustImage::AdjustImage(const QString filepath, const QString& mediatype,  QWid
 
     m_description = new QLabel;
     m_statusBar->addPermanentWidget(m_description);
+    
+    // Create crop confirmation buttons
+    CreateCropButtons();
+    
     // update tooltips on toolbar icons to include shortcut in a platform specific manner
     extendToolTip(ui->actionSave,        "Ctrl+S");    
     extendToolTip(ui->actionZoomIn,      "Ctrl++");
@@ -130,6 +139,27 @@ bool AdjustImage::isCropEnabled() { return ui->actionCrop->isEnabled(); }
 bool AdjustImage::isUndoEnabled() { return ui->actionUndo->isEnabled(); }
 bool AdjustImage::isRedoEnabled() { return ui->actionRedo->isEnabled(); }
 
+
+void AdjustImage::CreateCropButtons()
+{
+    // Create Confirm button
+    m_cropConfirmBtn = new QPushButton(tr("Confirm"));
+    m_cropConfirmBtn->setToolTip(tr("Confirm crop (Enter)"));
+    m_cropConfirmBtn->setMaximumWidth(80);
+    m_cropConfirmBtn->hide();
+    m_statusBar->addPermanentWidget(m_cropConfirmBtn);
+    
+    // Create Cancel button
+    m_cropCancelBtn = new QPushButton(tr("Cancel"));
+    m_cropCancelBtn->setToolTip(tr("Cancel crop (Esc)"));
+    m_cropCancelBtn->setMaximumWidth(80);
+    m_cropCancelBtn->hide();
+    m_statusBar->addPermanentWidget(m_cropCancelBtn);
+    
+    // Connect buttons
+    connect(m_cropConfirmBtn, SIGNAL(clicked()), this, SLOT(doCropConfirm()));
+    connect(m_cropCancelBtn, SIGNAL(clicked()), this, SLOT(doCropCancel()));
+}
 
 void AdjustImage::extendToolTip(QAction*m, const QString sc)
 {
@@ -192,6 +222,20 @@ int AdjustImage::GetHandleAtPosition(const QPoint& pos)
     return handle;
 }
 
+void AdjustImage::clampCropRectToBounds()
+{
+    // Calculate the display bounds of the image
+    int maxDisplayX = static_cast<int>(m_scaleFactor * m_image.width());
+    int maxDisplayY = static_cast<int>(m_scaleFactor * m_image.height());
+    
+    // Clamp rubber band coordinates to image bounds
+    m_rbstart.setX(std::max(0, std::min(m_rbstart.x(), maxDisplayX)));
+    m_rbstart.setY(std::max(0, std::min(m_rbstart.y(), maxDisplayY)));
+    
+    m_rbend.setX(std::max(0, std::min(m_rbend.x(), maxDisplayX)));
+    m_rbend.setY(std::max(0, std::min(m_rbend.y(), maxDisplayY)));
+}
+
 void AdjustImage::UpdateImageDescription()
 {
     QString colors_shades = m_image.isGrayscale() ? tr("shades") : tr("colors");
@@ -219,10 +263,22 @@ void AdjustImage::changeCroppingState(bool changeTo)
 
     if (changeTo) {
         setCursor(Qt::CrossCursor);
+        m_cropConfirmBtn->hide();
+        m_cropCancelBtn->hide();
         m_statusBar->showMessage(tr("Click and drag to select crop area, then click Confirm"));
     } else {
         setCursor(Qt::ArrowCursor);
+        m_cropConfirmBtn->hide();
+        m_cropCancelBtn->hide();
         m_statusBar->clearMessage();
+    }
+}
+
+void AdjustImage::showCropButtons()
+{
+    if (m_croppingRegionSelected) {
+        m_cropConfirmBtn->show();
+        m_cropCancelBtn->show();
     }
 }
 
@@ -331,6 +387,7 @@ bool AdjustImage::eventFilter(QObject* watched, QEvent* event)
                 m_rbstart = me->pos();
                 m_rb->setGeometry(QRect(m_rbstart, QSize()));
                 m_rb->show();
+                m_lastMousePos = me->pos();
             } else {
                 // Adjustment mode - check if clicking on a handle
                 m_draggingHandle = GetHandleAtPosition(me->pos());
@@ -341,6 +398,11 @@ bool AdjustImage::eventFilter(QObject* watched, QEvent* event)
                     m_rbstart = me->pos();
                     m_rb->setGeometry(QRect(m_rbstart, QSize()));
                     m_rb->show();
+                    m_cropConfirmBtn->hide();
+                    m_cropCancelBtn->hide();
+                } else if (m_draggingHandle == 4) {
+                    // Initialize for move operation
+                    m_lastMousePos = me->pos();
                 }
             }
             break;
@@ -358,8 +420,11 @@ bool AdjustImage::eventFilter(QObject* watched, QEvent* event)
                 m_rb->setGeometry(BuildRect(m_rbstart, m_rbend));
                 m_croppingRegionSelected = true;
                 m_statusBar->showMessage(tr("Drag corners/edges to adjust, then click Confirm to crop"));
+                showCropButtons();
             } else if (m_draggingHandle >= 0) {
-                // Finish handle dragging
+                // Finish handle dragging and clamp to bounds
+                clampCropRectToBounds();
+                m_rb->setGeometry(BuildRect(m_rbstart, m_rbend));
                 m_draggingHandle = -1;
             }
             break;
@@ -400,10 +465,15 @@ bool AdjustImage::eventFilter(QObject* watched, QEvent* event)
                         // bottom-right
                         m_rbend = position;
                     } else if (m_draggingHandle == 4) {
-                        // move entire rectangle
-                        QPoint delta = position - QPoint(currentRect.center().x(), currentRect.center().y());
-                        m_rbstart += delta;
-                        m_rbend += delta;
+                        // move entire rectangle - use previous position to calculate delta
+                        if (!m_lastMousePos.isNull()) {
+                            QPoint delta = position - m_lastMousePos;
+                            m_rbstart += delta;
+                            m_rbend += delta;
+                            // Clamp to image bounds during move
+                            clampCropRectToBounds();
+                        }
+                        m_lastMousePos = position;
                     }
                     m_rb->setGeometry(BuildRect(m_rbstart, m_rbend));
                 }
@@ -442,15 +512,33 @@ void AdjustImage::doCrop()
 void AdjustImage::doCropConfirm()
 {
     if (m_croppingRegionSelected) {
-        saveToHistoryWithClear(m_image);
+        // Convert display coordinates to image coordinates
         m_croppingEnd = m_rbend / m_scaleFactor;
         m_croppingStart = m_rbstart / m_scaleFactor;
         QRect rect = BuildRect(m_croppingStart, m_croppingEnd);
+        
+        // Validate minimum crop size
+        if (rect.width() < MIN_CROP_SIZE || rect.height() < MIN_CROP_SIZE) {
+            m_statusBar->showMessage(tr("Crop area too small (minimum 2x2 pixels)."));
+            return;
+        }
+        
+        // Validate crop area stays within image bounds
+        if (rect.x() < 0 || rect.y() < 0 || 
+            rect.right() > m_image.width() || 
+            rect.bottom() > m_image.height()) {
+            m_statusBar->showMessage(tr("Crop area exceeds image bounds."));
+            return;
+        }
+        
+        // Perform the crop
+        saveToHistoryWithClear(m_image);
         m_image = m_image.copy(rect);
         refreshLabel();
         m_rb->hide();
         m_croppingRegionSelected = false;
         changeCroppingState(false);
+        m_statusBar->showMessage(tr("Image cropped successfully."));
     }
 }
 
@@ -459,7 +547,9 @@ void AdjustImage::doCropCancel()
     m_rb->hide();
     m_croppingRegionSelected = false;
     m_draggingHandle = -1;
+    m_lastMousePos = QPoint(0, 0);
     changeCroppingState(false);
+    m_statusBar->showMessage(tr("Crop cancelled."));
 }
 
 #if 0
