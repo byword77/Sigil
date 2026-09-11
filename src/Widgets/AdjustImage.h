@@ -170,7 +170,6 @@ private:
     int m_webp_quality;
     int m_jxl_quality;
     int m_avif_quality;
-
 };
 
 #endif // ADJUSTIMAGE_H
