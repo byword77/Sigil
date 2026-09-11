@@ -56,6 +56,27 @@ namespace Ui {
 class AdjustImage;
 }
 
+enum CornerPosition {
+    CornerNone = 0,
+    CornerTopLeft,
+    CornerTopRight,
+    CornerBottomLeft,
+    CornerBottomRight
+};
+
+class CornerHandle : public QWidget
+{
+public:
+    CornerHandle(CornerPosition pos, QWidget* parent = nullptr);
+    CornerPosition position() const { return m_position; }
+
+protected:
+    void paintEvent(QPaintEvent* event) override;
+
+private:
+    CornerPosition m_position;
+};
+
 class AdjustImage : public QWidget
 {
     Q_OBJECT
@@ -86,6 +107,9 @@ public slots:
 signals:
     void InternalZoomFactorChanged(double factor);
 
+protected:
+    void keyPressEvent(QKeyEvent* event) override;
+
 private slots:
     bool eventFilter(QObject* watched, QEvent* event) override;
     void toggleShowToolbar(bool checked);
@@ -96,7 +120,8 @@ private:
     void WriteSettings();
     void ConnectSignalsToSlots();
     void adjustScrollBar(QScrollBar *scrollBar, double factor);
-    void changeCroppingState(bool changeTo);
+    void clearCropSelection();
+    void updateCropHandles();
     void refreshLabel();
     void rotateImage(int angle);
     void resizeImage(int tgtw, int tgth); 
@@ -118,17 +143,24 @@ private:
     QImage m_image;
     QLabel * m_description;
 
-    bool m_croppingState;
+    bool m_selectingCrop;
+    bool m_hasCropSelection;
+    QRect m_cropRect;
     QPoint m_croppingStart;
     QPoint m_croppingEnd;
     QPoint m_rbstart;
     QPoint m_rbend;
     QRubberBand*  m_rb;
 
-    QString m_fileName;  // this is the full absolute path
+    CornerHandle* m_handleTL;
+    CornerHandle* m_handleTR;
+    CornerHandle* m_handleBL;
+    CornerHandle* m_handleBR;
+    CornerPosition m_draggingHandle;
+    QPoint m_dragAnchor;
+
+    QString m_fileName;
     QString m_mediatype;
-    double m_ffsize = 0.0;
-    QString m_fsize;
 
     QVector<QImage> m_history;
     QVector<QImage> m_reverseHistory;
