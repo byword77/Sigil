@@ -159,8 +159,10 @@ private:
     CornerPosition m_draggingHandle;
     QPoint m_dragAnchor;
 
-    QString m_fileName;
+    QString m_fileName;  // this is the full absolute path
     QString m_mediatype;
+    double m_ffsize = 0.0;
+    QString m_fsize;
 
     QVector<QImage> m_history;
     QVector<QImage> m_reverseHistory;
@@ -170,6 +172,7 @@ private:
     int m_webp_quality;
     int m_jxl_quality;
     int m_avif_quality;
+
 };
 
 #endif // ADJUSTIMAGE_H
